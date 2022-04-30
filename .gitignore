@@ -1,4 +1,5 @@
 venv/
+.collections/
 .idea/
 .vscode/
 __pycache__/
