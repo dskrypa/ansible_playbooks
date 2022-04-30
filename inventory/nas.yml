@@ -1,0 +1,27 @@
+all:
+  hosts:
+    nas_root:
+      ansible_host: 192.168.0.235
+      ansible_user: root
+      ansible_private_key_file: ~/.ssh/nas_root_ssh_priv
+      ansible_python_interpreter: auto_silent
+  children:
+    nas:
+      children:
+        jails:
+          hosts:
+            plex:
+              ansible_host: plex-12.2@192.168.0.235
+            homeassistant:
+              ansible_host: homeassistant-12.2@192.168.0.235
+            grafana:
+              ansible_host: grafana@192.168.0.235
+          vars:
+            ansible_connection: sshjail
+      hosts:
+        root:
+          ansible_host: 192.168.0.235
+      vars:
+        ansible_user: root
+        ansible_private_key_file: ~/.ssh/nas_root_ssh_priv
+        ansible_python_interpreter: auto_silent

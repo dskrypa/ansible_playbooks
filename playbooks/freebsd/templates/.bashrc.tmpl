@@ -1,0 +1,40 @@
+bashrc_user="{{ ansible_user_id }}"
+
+{% raw %}
+# Enable the builtin emacs(1) command line editor in sh(1),
+# e.g. C-a -> beginning-of-line.
+set -o emacs
+
+# Decrease likelihood of filesystem metadata corruption on [CF,SD,USB]
+# persistent media by setting '-o noatime'.
+alias mountrw='mount -o noatime -uw'
+
+alias rgrep="grep -nriI"
+alias grepg="egrep -nria --exclude-dir=.git --exclude-dir=.idea --exclude=*.pyc"
+alias grepgc="egrep -nra --exclude-dir=.git --exclude-dir=.idea --exclude=*.pyc"
+alias git_hist="git log --decorate"
+alias git_unstage="git reset --"
+alias cdiff="diff --old-group-format=$'%df-%dl Removed:\n\e[0;31m%<\e[0m' --new-group-format=$'%df-%dl Added:\n\e[0;32m%>\e[0m' --unchanged-group-format= -ts"
+alias lst='ls -alhG -D"%F %T"'
+
+Yellow=$'\e[1;33m'
+Reset=$'\e[1;0m'
+Cyan=$'\e[1;36m'
+Green=$'\e[1;32m'
+
+export PS1="\[$Yellow\][\t]\[$Green\]\u\[$Reset\]@\[$Cyan\]\H\[$Reset\]: \[$Yellow\]\w \[$Green\]\!\[$Yellow\]\$\[\e[m\] "
+export LSCOLORS="Dxfxcxdxbxegedabagacad"
+export HISTSIZE=-1
+export HISTFILESIZE=-1
+
+shopt -s histappend
+shopt -s checkhash
+shopt -s checkwinsize
+shopt -s cmdhist
+shopt -s no_empty_cmd_completion
+
+export PATH=$PATH:~/bin
+
+#Set this last, as afterwards, everything else goes into history - it should be the LAST entry in .bashrc
+set -o history
+{% endraw -%}

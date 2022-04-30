@@ -1,0 +1,43 @@
+- name: Initialize a FreeBSD host/jail homedir & install missing utils
+  hosts: all
+  gather_facts: True
+  tasks:
+#    - debug: var=ansible_env
+
+    - name: Fix .bashrc
+      template:
+        src: templates/.bashrc.tmpl
+        dest: "{{ansible_env.HOME}}/.bashrc"
+        mode: 0644
+        backup: true
+      diff: true
+
+    - name: Create .inputrc
+      copy:
+        src: files/.inputrc
+        dest: "{{ansible_env.HOME}}/.inputrc"
+        mode: 0644
+        backup: true
+      diff: true
+
+#    - name: Install common utils
+#      community.general.pkgng:
+#        name: [vim, curl, lsof, htop]
+    # Note: Split due to lack of verbosity in this command + this has not been implemented yet:
+    # https://github.com/ansible/ansible/issues/24215
+    - name: Install vim
+      community.general.pkgng: name=vim
+    - name: Install curl
+      community.general.pkgng: name=curl
+    - name: Install lsof
+      community.general.pkgng: name=lsof
+    - name: Install htop
+      community.general.pkgng: name=htop
+
+    - name: Update pkg release train
+      replace:
+        path: /etc/pkg/FreeBSD.conf
+        regexp: '(url: .*)/quarterly",'
+        replace: '\1/latest",'
+        backup: true
+      diff: true
