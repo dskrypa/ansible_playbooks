@@ -9,16 +9,20 @@
         state: latest
       check_mode: true
       register: update_available
+
     - debug: var=update_available.changed
       # update_available.changed will be True if an update is available - skip remaining steps if it is not
+
     - name: Stop Plex
       service: name=plexmediaserver_plexpass state=stopped
       when: update_available.changed
+
     - name: Update Plex
       community.general.pkgng:
         name: plexmediaserver-plexpass
         state: latest
       when: update_available.changed
+
     - name: Start Plex
       service: name=plexmediaserver_plexpass state=started
       when: update_available.changed
