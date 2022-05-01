@@ -1,0 +1,22 @@
+---
+- name: Install Plex Media Server in a FreeBSD jail
+  hosts: plex
+  vars:
+    plex_install_path: /usr/local/share/plex_media_server
+    plex_home_path: /usr/local/plex_media_server
+  tasks:
+    - name: Create Plex user/group
+    - name: Install Plex binaries
+
+    - name: Create rc.d service file
+        template:
+          src: templates/plex_rc.d.tmpl
+          dest: /usr/local/etc/rc.d/plex_media_server
+          mode: 0755
+        diff: true
+
+    - name: Enable Plex service
+    - name: Start Plex service
+
+#    - name: Install promtail
+#    - name: Configure promtail log paths for Plex

@@ -1,0 +1,92 @@
+#!/bin/sh
+
+# PROVIDE: plex_media_server
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf to enable the Plex Media Server:
+#
+# plex_media_server_enable="YES"
+#
+# plex_media_server_support_path="/usr/local/plexdata" # Plex data: logs, media metadata, settings, etc
+#
+# plex_media_server_tmp="/var/tmp/plex" # configure tmp directory used for the transcoding process if desired
+#
+# plex_media_server_maxplugins="6" # Maximum number of background plugin procs. May have to raise in rare cases.
+#
+
+. /etc/rc.subr
+
+name=plex_media_server
+rcvar=plex_media_server_enable
+load_rc_config $name
+
+: ${plex_media_server_enable:=NO}
+: ${plex_media_server_support_path="{{ plex_home_path }}"}
+: ${plex_media_server_user="plex"}
+: ${plex_media_server_group="plex"}
+: ${plex_media_server_maxplugins=6}
+
+command=/usr/sbin/daemon
+procname="{{ plex_install_path }}/Plex_Media_Server"
+command_args="-f ${procname}"
+pidfile=/var/run/plex.pid
+start_precmd=plex_precmd
+stop_precmd=plex_stop_precmd
+stop_postcmd=plex_stop_postcmd
+
+plex_precmd() {
+    # Set identification variables for FreeNAS; with fallback to FreeBSD
+    export PLEX_MEDIA_SERVER_INFO_VENDOR=FreeBSD
+    export PLEX_MEDIA_SERVER_INFO_DEVICE=PC
+    export PLEX_MEDIA_SERVER_INFO_MODEL="$(uname -m)"
+    export PLEX_MEDIA_SERVER_INFO_PLATFORM_VERSION="$(uname -r)"
+
+    export SUPPORT_PATH="${plex_media_server_support_path}"
+    export HOME="${plex_media_server_support_path}/Plex Media Server"
+    export PYTHONHOME="{{ plex_install_path }}/Resources/Python"
+    export SCRIPTPATH="{{ plex_install_path }}"
+{% raw %}
+    export PLEX_MEDIA_SERVER_HOME="${SCRIPTPATH}"
+    export PLEX_MEDIA_SERVER_MAX_PLUGIN_PROCS=${plex_media_server_maxplugins}
+    export PLEX_MEDIA_SERVER_APPLICATION_SUPPORT_DIR=${plex_media_server_support_path}
+    export PLEX_MEDIA_SERVER_PIDFILE=${pidfile}
+    export PLEX_MEDIA_SERVER_LOG_DIR="${plex_media_server_support_path}/Plex Media Server/Logs"
+    export PATH="${SCRIPTPATH}/Resources/Python/bin:${PATH}"
+    export LC_ALL="en_US.UTF-8"
+    export LANG="en_US.UTF-8"
+    ulimit -s 3000
+
+    if [ ! -d ${pidfile%/*} ]; then
+        install -d -o ${plex_media_server_user} ${pidfile%/*};
+    fi
+
+    if [ ! -d "${plex_media_server_support_path}/Plex Media Server" ]; then
+        install -d -g ${plex_media_server_group} -o ${plex_media_server_user} "${plex_media_server_support_path}/Plex Media Server";
+    fi
+
+#    if [ ! -d "${plex_media_server_support_path}/Plex" ]; then
+#        install -d -g ${plex_media_server_group} -o ${plex_media_server_user} "${plex_media_server_support_path}/Plex";
+#    fi
+
+    if [ ${plex_media_server_tmp} ]; then
+        export TMPDIR=${plex_media_server_tmp};
+        install -d -g ${plex_media_server_group} -o ${plex_media_server_user} "${plex_media_server_tmp}";
+    fi
+}
+
+plex_stop_precmd() {
+    if [ -r ${pidfile} ]; then
+        export _PLEXPID=$(check_pidfile ${pidfile} ${procname})
+    fi
+}
+
+plex_stop_postcmd() {
+    _PLEX_CHILDREN=$(pgrep -g ${_PLEXPID})
+    echo "Cleaning up leftover child processes."
+    kill -9 ${_PLEX_CHILDREN}
+    wait_for_pids ${_PLEX_CHILDREN}
+}
+
+run_rc_command "$1"
+{% endraw -%}
