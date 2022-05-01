@@ -1,18 +1,25 @@
 """
-WIP
+Ansible module for installing / upgrading Plex Media Server with PlexPass.
+
+Only FreeBSD is technically supported right now, but it has support for downloading on other OSes.  The install method
+would need to change for different OSes, and the default install path would likely be different as well.
+
+:author: Doug Skrypa
 """
 
 # from __future__ import absolute_import, division, print_function
 # __metaclass__ = type
 
 import hashlib
+import json
 import platform
-# from distutils.spawn import find_executable
+import time
+from functools import cached_property
 from pathlib import Path
 from shlex import shlex
 from tarfile import TarFile
 from tempfile import TemporaryDirectory
-from typing import Optional, Union
+from typing import Optional, Union, Any
 
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
 
@@ -23,6 +30,8 @@ except ImportError:
     import traceback
     REQUESTS_IMP_ERR = traceback.format_exc()
 
+DEFAULT_CACHE_DIR = '/var/tmp/plex/ansible_cache/'
+# TODO: Different default path based on OS?
 INSTALL_PATH_DEFAULT = '/usr/local/share/plex_media_server'     # immutable binaries; owner of contents: root
 # PLEX_HOME_DEFAULT = '/usr/local/plex_media_server'              # mutable; owner of contents: plex
 # RC_SERVICE_PATH = '/usr/local/etc/rc.d/plex_media_server'       # owner: root
@@ -44,11 +53,21 @@ options:
             - The directory in which Plex should be installed
         default: {INSTALL_PATH_DEFAULT}
         type: str
-    plex_verify_checksum:
+    verify_download_checksum:
         description:
             - Whether the downloaded file's checksum should be verified
         type: bool
         default: True
+    distro:
+        description:
+            - The target distro for the Plex release to download (default: automatically detected)
+        type: str
+        default: None
+    version:
+        description:
+            - The specific version to install
+        type: str
+        default: latest
 author: dskrypa
 notes:
   - WIP
@@ -67,50 +86,47 @@ def main():
         argument_spec={
             'x_plex_token': {'required': True, 'type': 'str'},
             'plex_install_path': {'default': INSTALL_PATH_DEFAULT, 'type': 'str'},
-            'plex_verify_checksum': {'default': True, 'type': 'bool'},
+            'verify_download_checksum': {'default': True, 'type': 'bool'},
+            'distro': {'type': 'str', 'default': None},
+            'version': {'type': 'str', 'default': 'latest'},
         },
         supports_check_mode=True,
     )
-    args = module.params
-    install_dir = Path(args['plex_install_path'])
 
-    """
-    TODO:
-        - Implement check mode / dry run
-        - Store file indicating version currently installed (or find how to detect in installed files)
-        - Save previous versions, support version override
-        - Create symlink {install_dir}/Plex_Media_Server -> "{install_dir}/Plex Media Server"
-        - Follow ansible module interface for returning information
-    """
-
-    release_info = get_plex_release_info(args['x_plex_token'])
-    with TemporaryDirectory() as tmp_dir:
-        tmp_dir = Path(tmp_dir)
-        path = download_plex_release(release_info, tmp_dir, args['plex_verify_checksum'])
-
-        tar_file = TarFile.open(path)
-        tar_file.extractall(tmp_dir)
-
-    # module.fail_json(msg="To use option 'rootdir' pkg version must be 1.5 or greater")
-    # return module.run_command(cmd + list(args), environ_update=pkgng_env, **kwargs)
-
-    # if pkgs == ['*'] and p["state"] == 'latest':
-    #     # Operate on all installed packages. Only state: latest makes sense here.
-    #     _changed, _msg, _stdout, _stderr = upgrade_packages(module, run_pkgng)
-    #     changed = changed or _changed
-    #     stdout += _stdout
-    #     stderr += _stderr
-    #     msgs.append(_msg)
-
-    # module.exit_json(changed=changed, msg=", ".join(msgs), stdout=stdout, stderr=stderr)
-
-
-def test_dependencies(module):
     if REQUESTS_IMP_ERR is not None:
         module.fail_json(
             msg=missing_required_lib('requests', url='https://pypi.org/project/requests/'),
             exception=REQUESTS_IMP_ERR,
         )
+        return  # Not reachable, but makes PyCharm happy
+
+    args = module.params
+    installer = PlexInstaller(
+        x_plex_token=args['x_plex_token'],
+        install_dir=Path(args['plex_install_path']),
+        verify_checksum=args['verify_download_checksum'],
+        distro=args['distro'],
+        version=args['version'],
+    )
+    meta = {'action': 'install' if installer.installed_version is None else 'update'}
+
+    try:
+        needs_install, reason = installer.needs_install()
+        meta['versions'] = installer.versions()
+    except PlexInstallError as e:
+        module.fail_json(msg=str(e), **meta)
+        return  # Not reachable, but makes PyCharm happy
+
+    if module.check_mode or not needs_install:
+        module.exit_json(changed=needs_install, msg=reason, **meta)
+        return  # Not reachable, but makes PyCharm happy
+
+    try:
+        installer.install()
+    except PlexInstallError as e:
+        module.fail_json(msg=str(e), **meta)
+    else:
+        module.exit_json(changed=True, msg=f'Installed Plex Media Server version={installer.latest_version}', **meta)
 
 
 class OsRelease:
@@ -119,7 +135,6 @@ class OsRelease:
 
     In Python 3.10+: ``import platform; platform.freedesktop_os_release()``
     """
-    __slots__ = ('source', '_data')
     _defaults = {'NAME': 'Linux', 'ID': 'linux', 'PRETTY_NAME': 'Linux', 'SYSEXT_SCOPE': 'system portable'}
 
     def __init__(self, path: Union[str, Path] = '/etc/os-release'):
@@ -159,63 +174,173 @@ class OsRelease:
         except KeyError:
             return default
 
-    @property
+    @cached_property
     def id_like(self) -> frozenset[str]:
         try:
-            return frozenset(self['ID_LIKE'].split())
+            alt_ids = set(map(str.lower, self['ID_LIKE'].split()))
         except KeyError:
-            return frozenset()
+            alt_ids = set()
+        if self['ID'].lower() == 'ubuntu' or 'ubuntu' in alt_ids:
+            alt_ids.add('debian')  # Linux Mint at least does not include debian in this value
+        return frozenset(alt_ids)
 
-    @property
+    @cached_property
     def all_ids(self) -> frozenset[str]:
         return frozenset((self['ID'], *self.id_like))
 
 
-def get_plex_release_info(x_plex_token: str):
-    params = {'channel': 'plexpass', 'X-Plex-Token': x_plex_token}
-    resp = requests.get('https://plex.tv/api/downloads/5.json', params=params)
-    resp.raise_for_status()
-
-    system_name_map = {'windows': 'Windows', 'freebsd': 'FreeBSD', 'linux': 'Linux', 'macos': 'MacOS'}
-
-    uname = platform.uname()
-    system = uname.system.lower()
-    build = f'{system}-{uname.machine.lower()}'
-    os_release_info = resp.json()['computer'][system_name_map[system]]
-    releases = [rel for rel in os_release_info['releases'] if rel['build'] == build]
-    if system in ('linux', 'freebsd'):
-        os_rel = OsRelease()
-        os_id = os_rel['ID']
-        filtered = [rel for rel in releases if rel['distro'] == os_id]
-        if not filtered and (os_id_alts := os_rel.id_like):
-            filtered = [rel for rel in releases if rel['distro'] in os_id_alts]
-    else:
-        filtered = releases
-
-    if len(filtered) == 1:
-        return filtered[0]
-    raise RuntimeError(f'Unable to pick release from {filtered=}')
+class PlexInstallError(Exception):
+    pass
 
 
-def download_plex_release(release_info: dict[str, str], dir_path: Path, verify: bool = True) -> Path:
-    path = dir_path.joinpath(release_info['url'].rsplit('/', 1)[-1])
+class PlexInstaller:
+    def __init__(
+        self,
+        x_plex_token: str,
+        install_dir: Union[str, Path] = None,
+        verify_checksum: bool = True,
+        system: str = None,
+        build: str = None,
+        distro: str = None,
+        cache_dir: Union[str, Path] = None,
+        version: str = 'latest',
+    ):
+        self.x_plex_token = x_plex_token
+        self.verify_checksum = verify_checksum
+        self.version = version or 'latest'
 
-    resp = requests.get(release_info['url'])
-    resp.raise_for_status()
+        self.install_dir = Path(install_dir or INSTALL_PATH_DEFAULT)
+        self.version_path = self.install_dir.joinpath('__version__.txt')
+        self.cache_dir = Path(cache_dir or DEFAULT_CACHE_DIR)
+        self.release_cache_dir = self.cache_dir.joinpath('releases')
+        if not self.release_cache_dir.exists():
+            self.release_cache_dir.mkdir(parents=True)
 
-    with path.open('wb') as f:
-        f.write(resp.content)
+        uname = platform.uname()
+        self.system = system or uname.system.lower()
+        self.build = build or f'{system}-{uname.machine.lower()}'
+        self.distro = distro
 
-    if verify:
-        checksum = hashlib.md5()
-        with path.open('rb') as f:
-            checksum.update(f.read())
+    def needs_install(self) -> tuple[bool, str]:
+        if self.installed_version is None:
+            return True, f'Unable to find {self.version_path.as_posix()}'
+        elif self.installed_version == self.target_version:
+            return False, f'Version {self.installed_version} is already up to date'
+        else:
+            return True, f'Found existing={self.installed_version} installed, but the target={self.target_version}'
 
-        if not release_info['checksum'] == checksum.hexdigest():
-            raise RuntimeError(f'checksum mismatch - expected={release_info["checksum"]} found={checksum.hexdigest()}')
+    def install(self):
+        path = self.get_release()
+        with TemporaryDirectory() as tmp_dir:
+            tmp_dir = Path(tmp_dir)
+            tar_file = TarFile.open(path)
+            tar_file.extractall(tmp_dir)
+            extracted_dir = next((p for p in tmp_dir.iterdir() if p.is_dir()))
+            version_path = extracted_dir.joinpath('__version__.txt')
+            version_path.write_text(f'{self.target_version}\n', encoding='utf-8')
+            extracted_dir.replace(self.install_dir)
 
-    return path
+        self.install_dir.joinpath('Plex_Media_Server').symlink_to(self.install_dir.joinpath('Plex Media Server'))
+        self.__dict__['installed_version'] = self.target_version
+
+    # region Version Info
+
+    @cached_property
+    def installed_version(self) -> Optional[str]:
+        if not self.version_path.exists():
+            return None
+        return self.version_path.read_text('utf-8').strip()
+
+    @cached_property
+    def target_version(self) -> str:
+        return self.latest_version if self.version == 'latest' else self.version
+
+    @cached_property
+    def latest_version(self) -> str:
+        return self.system_release_info['version']
+
+    def versions(self) -> dict[str, Optional[str]]:
+        return {'installed': self.installed_version, 'target': self.target_version, 'latest': self.latest_version}
+
+    # endregion
+
+    @cached_property
+    def full_downloads_info(self) -> dict[str, Any]:
+        cache_path = self.cache_dir.joinpath('downloads_info.json')
+        if cache_path.exists():
+            age = time.time() - cache_path.stat().st_mtime
+            if age < 600:  # 10 minutes
+                with cache_path.open('r', encoding='utf-8') as f:
+                    return json.load(f)
+
+        params = {'channel': 'plexpass', 'X-Plex-Token': self.x_plex_token}
+        resp = requests.get('https://plex.tv/api/downloads/5.json', params=params)
+        resp.raise_for_status()
+
+        data = resp.json()
+        with cache_path.open('w', encoding='utf-8') as f:
+            json.dump(data, f)
+
+        return data
+
+    @cached_property
+    def system_release_info(self) -> dict[str, Any]:
+        try:
+            return next((v for k, v in self.full_downloads_info['computer'].items() if k.lower() == self.system))
+        except StopIteration:
+            raise PlexInstallError(f'No Plex releases found for system={self.system}')
+
+    @cached_property
+    def release_info(self) -> dict[str, Any]:
+        releases = [rel for rel in self.system_release_info['releases'] if rel['build'] == self.build]
+        if self.distro:
+            filtered = [rel for rel in releases if rel['distro'] == self.distro]
+        elif self.system in ('linux', 'freebsd'):
+            os_rel = OsRelease()
+            os_id = os_rel['ID']
+            filtered = [rel for rel in releases if rel['distro'] == os_id]
+            if not filtered and (os_id_alts := os_rel.id_like):
+                filtered = [rel for rel in releases if rel['distro'] in os_id_alts]
+        else:
+            filtered = releases
+
+        if len(filtered) == 1:
+            return filtered[0]
+
+        spec = f'system={self.system} with build={self.build}'
+        if self.distro:
+            spec += f' and distro={self.distro}'
+        raise PlexInstallError(f'Unable to pick Plex release for {spec} from {filtered=}')
+
+    @cached_property
+    def release_path(self) -> Path:
+        if self.version == 'latest':
+            return self.release_cache_dir.joinpath(self.release_info['url'].rsplit('/', 1)[-1])
+
+        for path in self.release_cache_dir.iterdir():
+            if self.version in path.name:
+                return path
+
+        raise PlexInstallError(f'Unable to find cached version={self.version} in {self.release_cache_dir.as_posix()}')
+
+    def get_release(self) -> Path:
+        if self.release_path.exists():
+            return self.release_path
+        return self.download_release(self.release_cache_dir)
+
+    def download_release(self, dir_path: Path = None) -> Path:
+        release_info = self.release_info
+        dir_path = dir_path or self.release_cache_dir
+        path = dir_path.joinpath(release_info['url'].rsplit('/', 1)[-1])
+        resp = requests.get(release_info['url'])
+        resp.raise_for_status()
+        path.write_bytes(resp.content)
+        if self.verify_checksum:
+            checksum = hashlib.sha1(path.read_bytes()).hexdigest()
+            if not release_info['checksum'] == checksum:
+                raise PlexInstallError(f'checksum mismatch - expected={release_info["checksum"]} found={checksum}')
+        return path
 
 
-# if __name__ == '__main__':
-#     main()
+if __name__ == '__main__':
+    main()
