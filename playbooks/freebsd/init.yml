@@ -30,5 +30,5 @@
       # Note: This is using a loop because the plugin doesn't indicate which packages were installed, and only even
       # indicates a count of packages when verbose>1, and https://github.com/ansible/ansible/issues/24215
       community.general.pkgng: name={{ item }}
-      with_items: [vim, curl, lsof, htop]
+      with_items: [bash, vim, curl, lsof, htop]
 #      name: [vim, curl, lsof, htop]

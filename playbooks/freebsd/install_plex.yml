@@ -1,22 +1,48 @@
 ---
 - name: Install Plex Media Server in a FreeBSD jail
-  hosts: plex
+  hosts: plex2
   vars:
     plex_install_path: /usr/local/share/plex_media_server
     plex_home_path: /usr/local/plex_media_server
+  vars_files:
+    # File containing x_plex_token
+    - ~/.config/plex_secrets.yml
   tasks:
-    - name: Create Plex user/group
+    - name: Create Plex group
+      group: name=plex gid=972
+
+    - name: Create Plex user
+      user: name=plex uid=972 group=plex shell=/usr/sbin/nologin
+      args:
+        comment: 'Plex Media Server'
+#        append: true
+#        groups: NasShareAccess
+
     - name: Install Plex binaries
+      plex:
+        x_plex_token: "{{ x_plex_token }}"
+        plex_install_path: "{{ plex_install_path }}"
+      register: install_result
+
+    - debug: var=install_result
+
+    - name: Create /usr/local/etc/rc.d
+      file: path=/usr/local/etc/rc.d state=directory
 
     - name: Create rc.d service file
-        template:
-          src: templates/plex_rc.d.tmpl
-          dest: /usr/local/etc/rc.d/plex_media_server
-          mode: 0755
-        diff: true
+      template:
+        src: templates/plex_rc.d.tmpl
+        dest: /usr/local/etc/rc.d/plex_media_server
+        mode: 0755
+      diff: true
 
     - name: Enable Plex service
+      service: name=plex_media_server enabled=true
+#      when: install_result.changed
+
     - name: Start Plex service
+      service: name=plex_media_server state=restarted
+      when: install_result.changed
 
 #    - name: Install promtail
 #    - name: Configure promtail log paths for Plex

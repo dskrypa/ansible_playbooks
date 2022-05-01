@@ -16,6 +16,9 @@ all:
               ansible_host: homeassistant-12.2@192.168.0.235
             grafana:
               ansible_host: grafana@192.168.0.235
+            plex2:
+              ansible_host: plex-12.3@192.168.0.235
+              ansible_python_interpreter: /usr/local/bin/python3.8
           vars:
             ansible_connection: sshjail
       hosts:

@@ -142,7 +142,8 @@ class OsRelease:
         self._data = self._parse(path.read_text('utf-8'))
 
     @classmethod
-    def _parse(cls, raw_data: str) -> dict[str, str]:
+    # def _parse(cls, raw_data: str) -> dict[str, str]:
+    def _parse(cls, raw_data: str):
         data = {}
         for line in filter(None, map(str.strip, raw_data.splitlines())):
             if line.startswith('#'):
@@ -175,7 +176,8 @@ class OsRelease:
             return default
 
     @cached_property
-    def id_like(self) -> frozenset[str]:
+    # def id_like(self) -> frozenset[str]:
+    def id_like(self):
         try:
             alt_ids = set(map(str.lower, self['ID_LIKE'].split()))
         except KeyError:
@@ -185,7 +187,8 @@ class OsRelease:
         return frozenset(alt_ids)
 
     @cached_property
-    def all_ids(self) -> frozenset[str]:
+    # def all_ids(self) -> frozenset[str]:
+    def all_ids(self):
         return frozenset((self['ID'], *self.id_like))
 
 
@@ -218,10 +221,14 @@ class PlexInstaller:
 
         uname = platform.uname()
         self.system = system or uname.system.lower()
-        self.build = build or f'{system}-{uname.machine.lower()}'
+        machine = uname.machine.lower()
+        if machine == 'amd64':
+            machine = 'x86_64'
+        self.build = build or f'{self.system}-{machine}'
         self.distro = distro
 
-    def needs_install(self) -> tuple[bool, str]:
+    # def needs_install(self) -> tuple[bool, str]:
+    def needs_install(self):
         if self.installed_version is None:
             return True, f'Unable to find {self.version_path.as_posix()}'
         elif self.installed_version == self.target_version:
@@ -259,13 +266,15 @@ class PlexInstaller:
     def latest_version(self) -> str:
         return self.system_release_info['version']
 
-    def versions(self) -> dict[str, Optional[str]]:
+    # def versions(self) -> dict[str, Optional[str]]:
+    def versions(self):
         return {'installed': self.installed_version, 'target': self.target_version, 'latest': self.latest_version}
 
     # endregion
 
     @cached_property
-    def full_downloads_info(self) -> dict[str, Any]:
+    # def full_downloads_info(self) -> dict[str, Any]:
+    def full_downloads_info(self):
         cache_path = self.cache_dir.joinpath('downloads_info.json')
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
@@ -284,14 +293,16 @@ class PlexInstaller:
         return data
 
     @cached_property
-    def system_release_info(self) -> dict[str, Any]:
+    # def system_release_info(self) -> dict[str, Any]:
+    def system_release_info(self):
         try:
             return next((v for k, v in self.full_downloads_info['computer'].items() if k.lower() == self.system))
         except StopIteration:
             raise PlexInstallError(f'No Plex releases found for system={self.system}')
 
     @cached_property
-    def release_info(self) -> dict[str, Any]:
+    # def release_info(self) -> dict[str, Any]:
+    def release_info(self):
         releases = [rel for rel in self.system_release_info['releases'] if rel['build'] == self.build]
         if self.distro:
             filtered = [rel for rel in releases if rel['distro'] == self.distro]
