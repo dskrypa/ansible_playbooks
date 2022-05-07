@@ -26,9 +26,24 @@
         backup: true
       diff: true
 
+#    - name: Fix pkg config - local
+#      replace:
+#        path: /usr/local/etc/pkg/repos/local.conf
+#        regexp: 'enabled: yes'
+#        replace: 'enabled: no'
+#        backup: true
+#      diff: true
+#
+#    - name: Fix pkg config - FreeBSD
+#      replace:
+#        path: /usr/local/etc/pkg/repos/FreeBSD.conf
+#        regexp: 'enabled: no'
+#        replace: 'enabled: yes'
+#        backup: true
+#      diff: true
+
     - name: Install common utils
       # Note: This is using a loop because the plugin doesn't indicate which packages were installed, and only even
       # indicates a count of packages when verbose>1, and https://github.com/ansible/ansible/issues/24215
       community.general.pkgng: name={{ item }}
       with_items: [bash, vim, curl, lsof, htop]
-#      name: [vim, curl, lsof, htop]

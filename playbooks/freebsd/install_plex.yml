@@ -11,12 +11,15 @@
     - name: Create Plex group
       group: name=plex gid=972
 
+    - name: Create NasShareAccess group
+      group: name=NasShareAccess gid=1001
+
     - name: Create Plex user
       user: name=plex uid=972 group=plex shell=/usr/sbin/nologin
       args:
         comment: 'Plex Media Server'
-#        append: true
-#        groups: NasShareAccess
+        append: true
+        groups: NasShareAccess
 
     - name: Install Plex binaries
       plex:
@@ -43,6 +46,9 @@
     - name: Start Plex service
       service: name=plex_media_server state=restarted
       when: install_result.changed
+
+# TODO: cd /usr/local/plex_media_server && tar -xpf /mnt/shared/plex_backup_2022-05-07.tar.zst
+#  -> Make sure that the `Plex Media Server` dir is owned by plex
 
 #    - name: Install promtail
 #    - name: Configure promtail log paths for Plex

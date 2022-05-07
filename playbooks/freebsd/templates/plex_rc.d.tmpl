@@ -30,7 +30,7 @@ load_rc_config $name
 command=/usr/sbin/daemon
 procname="{{ plex_install_path }}/Plex_Media_Server"
 command_args="-f ${procname}"
-pidfile=/var/run/plex.pid
+pidfile=/var/run/plex/plex.pid
 start_precmd=plex_precmd
 stop_precmd=plex_stop_precmd
 stop_postcmd=plex_stop_postcmd

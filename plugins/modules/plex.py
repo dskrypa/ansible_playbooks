@@ -7,9 +7,6 @@ would need to change for different OSes, and the default install path would like
 :author: Doug Skrypa
 """
 
-# from __future__ import absolute_import, division, print_function
-# __metaclass__ = type
-
 import hashlib
 import json
 import platform
@@ -17,18 +14,13 @@ import time
 from functools import cached_property
 from pathlib import Path
 from shlex import shlex
+from subprocess import check_call, check_output, SubprocessError
 from tarfile import TarFile
 from tempfile import TemporaryDirectory
 from typing import Optional, Union, Any
+from urllib.parse import urlencode
 
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
-
-REQUESTS_IMP_ERR = None
-try:
-    import requests
-except ImportError:
-    import traceback
-    REQUESTS_IMP_ERR = traceback.format_exc()
 
 DEFAULT_CACHE_DIR = '/var/tmp/plex/ansible_cache/'
 # TODO: Different default path based on OS?
@@ -93,12 +85,13 @@ def main():
         supports_check_mode=True,
     )
 
-    if REQUESTS_IMP_ERR is not None:
-        module.fail_json(
-            msg=missing_required_lib('requests', url='https://pypi.org/project/requests/'),
-            exception=REQUESTS_IMP_ERR,
-        )
-        return  # Not reachable, but makes PyCharm happy
+    # TODO: Catch error for missing requests/curl and return something similar to below
+    # if REQUESTS_IMP_ERR is not None:
+    #     module.fail_json(
+    #         msg=missing_required_lib('requests', url='https://pypi.org/project/requests/'),
+    #         exception=REQUESTS_IMP_ERR,
+    #     )
+    #     return  # Not reachable, but makes PyCharm happy
 
     args = module.params
     installer = PlexInstaller(
@@ -283,10 +276,8 @@ class PlexInstaller:
                     return json.load(f)
 
         params = {'channel': 'plexpass', 'X-Plex-Token': self.x_plex_token}
-        resp = requests.get('https://plex.tv/api/downloads/5.json', params=params)
-        resp.raise_for_status()
+        data = get_json(f'https://plex.tv/api/downloads/5.json?{urlencode(params)}')
 
-        data = resp.json()
         with cache_path.open('w', encoding='utf-8') as f:
             json.dump(data, f)
 
@@ -343,14 +334,93 @@ class PlexInstaller:
         release_info = self.release_info
         dir_path = dir_path or self.release_cache_dir
         path = dir_path.joinpath(release_info['url'].rsplit('/', 1)[-1])
-        resp = requests.get(release_info['url'])
-        resp.raise_for_status()
-        path.write_bytes(resp.content)
+
+        save_file(release_info['url'], save_path=path)
+
         if self.verify_checksum:
             checksum = hashlib.sha1(path.read_bytes()).hexdigest()
             if not release_info['checksum'] == checksum:
                 raise PlexInstallError(f'checksum mismatch - expected={release_info["checksum"]} found={checksum}')
         return path
+
+
+def _download_func(req_func, curl_func):
+    def download_func(url: str, *args, curl_args=(), **kwargs):
+        try:
+            return req_func(url, *args, **kwargs)
+        except ImportError:
+            pass
+        try:
+            return curl_func(url, *args, args=curl_args, **kwargs)
+        except SubprocessError:
+            pass
+        missing_dependencies(url)
+
+    return download_func
+
+
+# region Get Json
+
+def _get_json_via_requests(url: str):
+    import requests
+
+    with requests.Session() as session:
+        resp = session.get(url)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def _get_json_via_curl(url: str, args=()):
+    stdout = check_output(['curl', url, *args])
+    return json.loads(stdout)
+
+
+get_json = _download_func(_get_json_via_requests, _get_json_via_curl)
+
+# endregion
+
+
+# region Get File
+
+def _save_file_via_requests(url: str, save_path: Path):
+    import requests
+
+    with save_path.open('wb') as f, requests.Session() as session:
+        resp = session.get(url)
+        resp.raise_for_status()
+        f.write(resp.content)
+
+
+def _save_file_via_curl(url: str, save_path: Path, args=()):
+    check_call(['curl', url, '-o', save_path.as_posix(), *args])
+
+
+save_file = _download_func(_save_file_via_requests, _save_file_via_curl)
+
+# endregion
+
+
+def missing_dependencies(url: str):
+    import platform
+    from distutils.spawn import find_executable
+
+    msg_parts = [
+        f'Unable to download {url} due to missing install time dependencies.',
+        'One of the following is required:',
+        '  - `pkg install curl`'
+    ]
+    if find_executable('pip') is None:
+        if platform.uname().system.lower() == 'freebsd':
+            py_ver = ''.join(platform.python_version_tuple()[:2])
+            cmd = f'pkg install py{py_ver}-pip'
+        else:
+            cmd = 'apt install python3-pip'
+        extra = f' (you may need to run `{cmd}` first)'
+    else:
+        extra = ''
+
+    msg_parts.append(f'  - `pip install requests`{extra}')
+    raise RuntimeError('\n'.join(msg_parts))
 
 
 if __name__ == '__main__':
