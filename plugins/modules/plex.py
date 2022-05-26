@@ -10,6 +10,7 @@ would need to change for different OSes, and the default install path would like
 import hashlib
 import json
 import platform
+import shutil
 import time
 from functools import cached_property
 from pathlib import Path
@@ -235,13 +236,31 @@ class PlexInstaller:
             tmp_dir = Path(tmp_dir)
             tar_file = TarFile.open(path)
             tar_file.extractall(tmp_dir)
+
             extracted_dir = next((p for p in tmp_dir.iterdir() if p.is_dir()))
             version_path = extracted_dir.joinpath('__version__.txt')
             version_path.write_text(f'{self.target_version}\n', encoding='utf-8')
-            extracted_dir.replace(self.install_dir)
+
+            self._replace_install_dir(extracted_dir, self.install_dir)
 
         self.install_dir.joinpath('Plex_Media_Server').symlink_to(self.install_dir.joinpath('Plex Media Server'))
         self.__dict__['installed_version'] = self.target_version
+
+    def _replace_install_dir(self, extracted_dir: Path, install_dir: Path):
+        bkp_dir = None
+        if install_dir.exists():
+            bkp_dir = _unique_path(install_dir.parent, f'{install_dir.name}_bkp')
+            install_dir.rename(bkp_dir)
+
+        try:
+            extracted_dir.replace(install_dir)
+        except Exception:
+            if bkp_dir is not None:
+                bkp_dir.rename(install_dir)
+            raise
+
+        if bkp_dir is not None:
+            shutil.rmtree(bkp_dir)
 
     # region Version Info
 
@@ -342,6 +361,16 @@ class PlexInstaller:
             if not release_info['checksum'] == checksum:
                 raise PlexInstallError(f'checksum mismatch - expected={release_info["checksum"]} found={checksum}')
         return path
+
+
+def _unique_path(parent: Path, name: str) -> Path:
+    path = parent.joinpath(name)
+    n = 0
+    while path.exists():
+        path = parent.joinpath(f'{name}_{n}')
+        n += 1
+
+    return path
 
 
 def _download_func(req_func, curl_func):

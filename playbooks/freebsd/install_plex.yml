@@ -4,6 +4,7 @@
   vars:
     plex_install_path: /usr/local/share/plex_media_server
     plex_home_path: /usr/local/plex_media_server
+    loki_netloc: 192.168.0.194:3100
   vars_files:
     # File containing x_plex_token
     - ~/.config/plex_secrets.yml
