@@ -18,7 +18,7 @@ from shlex import shlex
 from subprocess import check_call, check_output, SubprocessError
 from tarfile import TarFile
 from tempfile import TemporaryDirectory
-from typing import Optional, Union, Any
+from typing import Optional, Union, Any, Dict, FrozenSet, Tuple
 from urllib.parse import urlencode
 
 from ansible.module_utils.basic import AnsibleModule, missing_required_lib
@@ -136,8 +136,7 @@ class OsRelease:
         self._data = self._parse(path.read_text('utf-8'))
 
     @classmethod
-    # def _parse(cls, raw_data: str) -> dict[str, str]:
-    def _parse(cls, raw_data: str):
+    def _parse(cls, raw_data: str) -> Dict[str, str]:
         data = {}
         for line in filter(None, map(str.strip, raw_data.splitlines())):
             if line.startswith('#'):
@@ -146,13 +145,9 @@ class OsRelease:
             key, val = map(str.strip, line.split('=', 1))
             if val and (val[0] in '"\'' or '\\' in val):
                 val = ''.join(shlex(val, posix=True))  # Some lines don't follow the spec exactly
+                # Documentation for /etc/os-release suggested using `val = ast.literal_eval(val)`, but that fails on
+                # \ escapes that are not valid in python
             data[key] = val
-
-            # The following is closer to the py impl in docs, but fails on \ escapes that are not valid in python
-            # key, val = map(str.strip, line.split('=', 1))
-            # if val and (val[0] in '"\'' or '\\' in val):
-            #     val = ast.literal_eval(val)
-            # data[key] = val
 
         return data
 
@@ -160,8 +155,7 @@ class OsRelease:
         try:
             return self._data[key]
         except KeyError:
-            pass
-        return self._defaults[key]
+            return self._defaults[key]
 
     def get(self, key: str, default: str = None) -> Optional[str]:
         try:
@@ -170,8 +164,7 @@ class OsRelease:
             return default
 
     @cached_property
-    # def id_like(self) -> frozenset[str]:
-    def id_like(self):
+    def id_like(self) -> FrozenSet[str]:
         try:
             alt_ids = set(map(str.lower, self['ID_LIKE'].split()))
         except KeyError:
@@ -181,8 +174,7 @@ class OsRelease:
         return frozenset(alt_ids)
 
     @cached_property
-    # def all_ids(self) -> frozenset[str]:
-    def all_ids(self):
+    def all_ids(self) -> FrozenSet[str]:
         return frozenset((self['ID'], *self.id_like))
 
 
@@ -221,8 +213,7 @@ class PlexInstaller:
         self.build = build or f'{self.system}-{machine}'
         self.distro = distro
 
-    # def needs_install(self) -> tuple[bool, str]:
-    def needs_install(self):
+    def needs_install(self) -> Tuple[bool, str]:
         if self.installed_version is None:
             return True, f'Unable to find {self.version_path.as_posix()}'
         elif self.installed_version == self.target_version:
@@ -278,15 +269,13 @@ class PlexInstaller:
     def latest_version(self) -> str:
         return self.system_release_info['version']
 
-    # def versions(self) -> dict[str, Optional[str]]:
-    def versions(self):
+    def versions(self) -> Dict[str, Optional[str]]:
         return {'installed': self.installed_version, 'target': self.target_version, 'latest': self.latest_version}
 
     # endregion
 
     @cached_property
-    # def full_downloads_info(self) -> dict[str, Any]:
-    def full_downloads_info(self):
+    def full_downloads_info(self) -> Dict[str, Any]:
         cache_path = self.cache_dir.joinpath('downloads_info.json')
         if cache_path.exists():
             age = time.time() - cache_path.stat().st_mtime
@@ -303,16 +292,14 @@ class PlexInstaller:
         return data
 
     @cached_property
-    # def system_release_info(self) -> dict[str, Any]:
-    def system_release_info(self):
+    def system_release_info(self) -> Dict[str, Any]:
         try:
             return next((v for k, v in self.full_downloads_info['computer'].items() if k.lower() == self.system))
         except StopIteration:
             raise PlexInstallError(f'No Plex releases found for system={self.system}')
 
     @cached_property
-    # def release_info(self) -> dict[str, Any]:
-    def release_info(self):
+    def release_info(self) -> Dict[str, Any]:
         releases = [rel for rel in self.system_release_info['releases'] if rel['build'] == self.build]
         if self.distro:
             filtered = [rel for rel in releases if rel['distro'] == self.distro]
